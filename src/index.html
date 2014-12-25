@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title>Cardboard Example</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+  <link href='http://fonts.googleapis.com/css?family=Lato:100,300,400' rel='stylesheet' type='text/css'>
+  <link rel="stylesheet" href="stylesheets/card.css" type="text/css" media="screen" charset="utf-8">
+  <style>
+    body {
+      margin: 0px;
+      overflow: hidden;
+    }
+    #example {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <div style="display: none" id="example"></div>
+  
+  <div class="dialog">
+    <div class="dialog-title">Christmas Card(board)</div>
+    <div class="dialog-info">
+      <p>Christmas Card(Board) is an experiment in building an interactive 3D Christmas Card that can be viewed with <a href="https://www.google.com/get/cardboard/" title="Cardboard">Google Cardboard</a></p>
+      <p>To view the scene on a phone or tablet, move the phone around like you would if you were looking into a window.</p>
+      <p>To view the scene on a computer, click and drag with your mouse to look around</p>
+    </div>
+    <div style="display:none" class="no-webgl">Support for WebGL has not been detected in your browser. Please try a different browser</div>
+    <button class="btn" onClick="init(false)" disabled>View the card</button>
+    <button class="btn" onClick="init(true)" disabled>View with Cardboard</button>
+    <div class="dialog-notes">
+      <p>Works on the latest versions of Chrome, Firefox and Safari including Chrome for Android</p>
+    </div>
+  </div>
+
+  <script src="js/third-party/threejs/three.min.js"></script>
+  <script src="js/third-party/threejs/StereoEffect.js"></script>
+  <script src="js/third-party/threejs/DeviceOrientationControls.js"></script>
+  <script src="js/third-party/threejs/OrbitControls.js"></script>
+  <script src="js/DDSLoader.js"></script>
+  <script src="js/OBJLoader.js"></script>
+  <script src="js/MTLLoader.js"></script>
+  <script src="js/OBJMTLLoader.js"></script>
+  <script src="js/has.js"></script>
+
+  <script type="x-shader/x-vertex" id="vertexShader">
+
+    varying vec3 vWorldPosition; void main() { vec4 worldPosition = modelMatrix * vec4( position, 1.0 ); vWorldPosition = worldPosition.xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 ); }
+
+  </script>
+
+  <script type="x-shader/x-fragment" id="fragmentShader">
+
+    uniform vec3 topColor; uniform vec3 bottomColor; uniform float offset; uniform float exponent; varying vec3 vWorldPosition; void main() { float h = normalize( vWorldPosition + offset ).y; gl_FragColor = vec4( mix( bottomColor, topColor, max( pow( max(
+    h , 0.0), exponent ), 0.0 ) ), 1.0 ); }
+
+  </script>
+
+  <script>
+    var camera, scene, renderer;
+    var effect, controls;
+    var element, container;
+    var particles = [];
+    var cloudParticles;
+    var objectStore = [];
+    var clock = new THREE.Clock();
+
+    if (has.webgl) {
+      buttons = document.querySelectorAll("button");
+      for (i = 0; i < buttons.length; i++) {
+        buttons[i].disabled = false;
+      }
+    } else {
+      document.querySelector(".has-webgl").style.display = block;
+    }
+
+    function init(vrMode) {
+      document.querySelector(".dialog").style.display = "none";
+      document.getElementById("example").style.display = "block";
+      renderer = new THREE.WebGLRenderer();
+      element = renderer.domElement;
+      container = document.getElementById('example');
+      container.appendChild(element);
+
+      scene = new THREE.Scene();
+
+      if (vrMode) {
+        effect = new THREE.StereoEffect(renderer);
+        camera = new THREE.PerspectiveCamera(90, 1, 0.001, 2200);
+      } else {
+        effect = renderer;
+        camera = new THREE.PerspectiveCamera(60, 1, 1, 2200);
+      }
+
+
+      camera.position.set(0, 10, 0);
+      scene.add(camera);
+      
+      controls = new THREE.OrbitControls(camera, element);
+      controls.target.set(
+        camera.position.x  + 0.1,
+        camera.position.y,
+        camera.position.z
+      );
+      
+      controls.noZoom = true;
+      controls.noPan = true;
+
+      function setOrientationControls(e) {
+        if (!e.alpha) {
+          return;
+        }
+
+        controls = new THREE.DeviceOrientationControls(camera, true);
+        controls.connect();
+        controls.update();
+
+        element.addEventListener('mousemove', fullscreen, false);
+
+        window.removeEventListener('deviceorientation', setOrientationControls);
+      }
+      window.addEventListener('deviceorientation', setOrientationControls, true);
+
+
+      light = new THREE.HemisphereLight( 0xf6fbff, 0xf6fbff, 0.9);
+      light.position.set( 0, 1000, 0 );
+      scene.add( light );
+
+      var spotLight = new THREE.SpotLight( 0xffffff, 0.8 );
+      spotLight.position.set( 0, 1000, 0 );
+
+      spotLight.castShadow = true;
+
+      spotLight.shadowMapWidth = 1024;
+      spotLight.shadowMapHeight = 1024;
+
+      spotLight.shadowCameraNear = 500;
+      spotLight.shadowCameraFar = 4000;
+      spotLight.shadowCameraFov = 30;
+
+      scene.add( spotLight );
+      
+      scene.fog = new THREE.Fog( 0x75c3ff, 0, 1200 );
+      scene.fog.color.setHSL( 0.6, 0, 1 );
+      renderer.setClearColor( 0x75c3ff, 1 );
+
+      // GROUND
+      var groundDiffuse = new THREE.ImageUtils.loadTexture('textures/TerrDiffuse.jpg');
+      var groundDisplace = new THREE.ImageUtils.loadTexture('textures/TerrDisplace.png');
+      
+      var normShader = THREE.ShaderLib["normalmap"];
+      var groundUniforms = THREE.UniformsUtils.clone(normShader.uniforms);
+      
+      groundUniforms[ "enableDisplacement" ].value = true;
+      groundUniforms[ "enableDiffuse" ].value = true;
+      groundUniforms[ "tDisplacement" ].value = groundDisplace;
+      groundUniforms[ "tDiffuse" ].value = groundDiffuse;
+      groundUniforms[ "uDisplacementScale" ].value = 100;
+      
+      var groundParams = {
+        fragmentShader: normShader.fragmentShader, 
+        vertexShader: normShader.vertexShader,
+        uniforms: groundUniforms,
+        lights: true,
+        wireframe: false
+      };
+      
+      var groundMat = new THREE.ShaderMaterial(groundParams);
+    
+      var groundGeo = new THREE.PlaneGeometry(1000, 1000, 10, 10);
+      groundGeo.computeTangents();
+      
+      var ground = new THREE.Mesh(groundGeo, groundMat);
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = 0;
+      scene.add(ground);
+
+      ground.receiveShadow = true;
+
+      // SNOW Particles
+      var materials = [];
+      particlesGeo = new THREE.Geometry();
+      sprite = THREE.ImageUtils.loadTexture( "textures/snowflake.png" );
+      var vertex;
+      for ( i = 0; i < 50; i ++ ) {
+        vertex = new THREE.Vector3();
+        vertex.x = Math.random() * 2000 - 1000;
+        vertex.y = Math.random() * 2000 - 1000;
+        vertex.z = Math.random() * 2000 - 1000;
+        particlesGeo.vertices.push( vertex );
+      }
+      parameters = [ [ [1.0, 0.2, 0.5], sprite, 15 ],
+        [ [1.0, 0.2, 0.5], sprite, 10 ]];
+      for ( i = 0; i < parameters.length; i ++ ) {
+        color  = parameters[i][0];
+        sprite = parameters[i][1];
+        size   = parameters[i][2];
+        materials[i] = new THREE.PointCloudMaterial( { size: size, map: sprite, blending: THREE.AdditiveBlending, depthTest: false, transparent : true } );
+        materials[i].color.setHSL( color[0], color[1], color[2] );
+        particles[i] = new THREE.PointCloud( particlesGeo, materials[i] );
+        particles[i].rotation.x = Math.random() * 6;
+        particles[i].rotation.y = Math.random() * 6;
+        particles[i].rotation.z = Math.random() * 6;
+        particles[i].speed = Math.random() * 0.0005 + 0.001;
+        scene.add( particles[i] );
+      }
+      
+      var vertexShader = document.getElementById( 'vertexShader' ).textContent;
+      var fragmentShader = document.getElementById( 'fragmentShader' ).textContent;
+      var uniforms = {
+        topColor:      { type: "c", value: new THREE.Color(0x003492) },
+        bottomColor: { type: "c", value: new THREE.Color( 0xbee1fc ) },
+        offset:         { type: "f", value: 100 },
+        exponent:     { type: "f", value: 0.7 }
+      }
+      
+      //skydome
+      var skyGeo = new THREE.SphereGeometry( 1800, 8, 8 );
+      var skyMat = new THREE.ShaderMaterial( { vertexShader: vertexShader, fragmentShader: fragmentShader, uniforms: uniforms, side: THREE.BackSide } );
+      
+      var sky = new THREE.Mesh( skyGeo, skyMat );
+      scene.add( sky );
+      
+      loadModel({
+        name: 'pine',
+        position: {
+          x: {random: true, multiplier: 30, offset: -15, space: 40},
+          z: {random: true, multiplier: 30, offset: -15, space: 40},
+          y: 0
+        },
+        scale: {multiplier: 2, offset: 5},
+        rotation: {x: 7, y: 360, z: 7},
+        count: 10,
+        save: true
+      });
+      
+      loadModel({
+        name: 'rock',
+        position: {
+          x: {random: true, multiplier: 20, offset: -10, space: 30},
+          z: {random: true, multiplier: 20, offset: -10, space: 30},
+          y: 0
+        },
+        scale: {multiplier: 2, offset: 5},
+        rotation: {x: 7, y: 360, z: 7},
+        count: 5
+      });
+      
+      loadModel({
+        name: 'mountain',
+        position: {
+          x: {random: true, multiplier: 200, offset: -100, space: 800},
+          z: {random: true, multiplier: 200, offset: -100, space: 800},
+          y: -100
+        },
+        scale: {multiplier: 50, offset: 200},
+        rotation: {x: 0, y: 360, z: 0},
+        count: 3
+      });
+      
+      loadModel({
+        name: 'snowman',
+        position: {
+          x: 25,
+          z: -17,
+          y: 0
+        },
+        scale: {multiplier: 0, offset: 2},
+        count: 1,
+        faceCamera: true,
+        save: true
+      });
+      
+      loadModel({
+        name: 'box',
+        position: {
+          x: 25,
+          z: 0,
+          y: -1
+        },
+        scale: {multiplier: 0, offset: 5},
+        faceCamera: true,
+        count: 1,
+        save: true
+      });
+      
+      loadModel({
+        name: 'boxbottom',
+        position: {
+          x: 25,
+          z: 0,
+          y: -2
+        },
+        scale: {multiplier: 0, offset: 5},
+        faceCamera: true,
+        count: 1,
+        save: true
+      });
+      
+      loadModel({
+        name:'text',
+        position: {
+          x: 25,
+          y: 5,
+          z: 0
+        },
+        scale: {multiplier: 0, offset: 0.5},
+        faceCamera: true,
+        count: 1,
+        save: true
+      });
+      
+      
+      renderer.shadowMapEnabled = false;
+      renderer.shadowMapCullFace = THREE.CullFaceBack;
+
+      window.addEventListener('resize', resize, false);
+      setTimeout(resize, 1);
+      
+      animate();
+    }
+    
+    /* Returns the last mesh created */
+    function loadModel(model) {
+      var loader = new THREE.OBJMTLLoader();
+      var mesh, scaleVal;
+      
+      var meshHandler = function(object3d) {
+        
+        for (i = 0; i < model.count; i++) {
+          mesh = object3d.clone();
+          //mesh.lookAt(camera.position);
+          scaleVal = Math.random() * model.scale.multiplier + model.scale.offset;
+          mesh.scale.set(scaleVal, scaleVal, scaleVal);
+          
+          mesh.position.x = calculatePosition(model.position.x);
+          mesh.position.z = calculatePosition(model.position.z);
+          mesh.position.y = calculatePosition(model.position.y);
+          
+          if (model.rotation) {
+            mesh.rotation.x = degToRad(Math.random() * model.rotation.x);
+            mesh.rotation.z = degToRad(Math.random() * model.rotation.z);
+            mesh.rotation.y = degToRad(Math.random() * model.rotation.y);
+          }
+          
+          if (model.faceCamera) {
+            //mesh.up = new THREE.Vector3(0,0,1);
+            mesh.up = new THREE.Vector3(0,1,0);
+            mesh.lookAt(new THREE.Vector3(0,0,0));
+          }
+          
+          if (model.save) {
+            if (!objectStore[model.name]) {
+              objectStore[model.name] = [];
+            }
+            objectStore[model.name][i] = mesh;
+          }
+          
+          scene.add(mesh);  
+        }
+      };
+      
+      loader.load('model/' + model.name + '.obj', 'model/' + model.name + '.mtl', meshHandler);
+      
+      return mesh;
+    }
+    
+    function calculatePosition (position) {
+      if (position.random) {
+        val = Math.random() * position.multiplier + position.offset;
+        sign = val > 1? 1 : -1;
+        return Math.random() * position.multiplier + position.offset + sign * position.space;
+      } else {
+        return position;
+      }
+    }
+
+    function degToRad(deg) {
+      return deg * (Math.PI / 180);
+    }
+
+    function resize() {
+      var width = container.offsetWidth;
+      var height = container.offsetHeight;
+
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+
+      renderer.setSize(width, height);
+      effect.setSize(width, height);
+    }
+
+    function update(dt) {
+      resize();
+
+      camera.updateProjectionMatrix();
+
+      controls.update(dt);
+    }
+
+    function render(dt) {
+      effect.render(scene, camera);
+    }
+
+    function animate(t) {
+      requestAnimationFrame(animate);
+
+      for (i = 0; i < particles.length; i++) {
+        particles[i].rotation.y = t * particles[i].speed * 0.8;
+        particles[i].rotation.x = t * particles[i].speed * 0.5;
+      }
+      
+      var snom = objectStore['snowman'];
+      
+      if (snom) {
+        for (i = 0; i < snom.length; i++) {
+          snom[i].scale.set(3, 3 + 0.30 * Math.sin(t* 0.016), 3);
+          snom[i].rotation.z = 0.2* Math.sin(t*0.008);
+        }
+      }
+      
+      var tree = objectStore['pine'];
+      
+      if (tree) {
+        for (i = 0; i < tree.length; i++) {
+          tree[i].scale.set(tree[i].scale.x, tree[i].scale.y + 0.001 * Math.sin(t* 0.0016), tree[i].scale.z);
+          tree[i].rotation.z = 0.1* Math.sin(t*0.0008);
+        }
+      }
+      
+      var boxlid = objectStore['box'];
+      var text= objectStore['text'];
+      if (boxlid && !boxlid[0].finished) {
+        //boxlid[0].position.y = Math.abs(Math.sin(t*0.008));
+        if (boxlid[0].position.z < 12) {
+          boxlid[0].position.z += 0.5;
+        } else {
+          if (boxlid[0].position.y > -10) {
+            boxlid[0].position.y += -0.5;
+          } else {
+            boxlid[0].finished = true;
+          }
+        }
+      } else {
+        if (text && !text[0].finished) {
+          text[0].position.y +=0.1;
+          var scaleFactor = text[0].scale.x + 0.05;
+          text[0].scale.set(scaleFactor, scaleFactor, scaleFactor);
+        
+          if (scaleFactor > 4){
+            text[0].finished = true;
+          }
+        } else if (text) {
+          text[0].position.y = 12 + Math.abs(Math.sin(t* 0.008));
+        }
+      }
+      
+      update(clock.getDelta());
+      render(clock.getDelta());
+    }
+
+    function fullscreen() {
+      if (container.requestFullscreen) {
+        container.requestFullscreen();
+      } else if (container.msRequestFullscreen) {
+        container.msRequestFullscreen();
+      } else if (container.mozRequestFullScreen) {
+        container.mozRequestFullScreen();
+      } else if (container.webkitRequestFullscreen) {
+        container.webkitRequestFullscreen();
+      }
+    }
+  </script>
+</body>
+
+</html>
